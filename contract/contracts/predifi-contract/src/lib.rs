@@ -136,6 +136,9 @@ pub struct Pool {
     pub min_stake: i128,
     /// Maximum stake amount per prediction (0 = no limit).
     pub max_stake: i128,
+    /// Maximum total stake allowed for this pool (0 = no cap).
+    /// Enforced against `Pool.total_stake` (which includes `initial_liquidity`).
+    pub max_total_stake: i128,
     /// Initial liquidity provided by the pool creator (house money).
     /// This is part of total_stake but excluded from fee calculations.
     pub initial_liquidity: i128,
@@ -201,6 +204,23 @@ pub enum DataKey {
 pub struct Prediction {
     pub amount: i128,
     pub outcome: u32,
+}
+
+/// Arguments for creating a new pool
+#[contracttype]
+#[derive(Clone)]
+pub struct CreatePoolArgs {
+    pub end_time: u64,
+    pub token: Address,
+    pub options_count: u32,
+    pub description: String,
+    pub metadata_url: String,
+    pub min_stake: i128,
+    pub max_stake: i128,
+    pub initial_liquidity: i128,
+    pub category: Symbol,
+    /// Maximum total stake for the pool (0 = no cap). Must be >= initial_liquidity.
+    pub max_total_stake: i128,
 }
 
 // ── Events ───────────────────────────────────────────────────────────────────
@@ -1032,79 +1052,74 @@ impl PredifiContract {
     /// * `min_stake`         - Minimum stake amount per prediction (must be > 0).
     /// * `max_stake`         - Maximum stake amount per prediction (0 = no limit, else must be >= min_stake).
     /// * `initial_liquidity` - Optional initial liquidity to provide (house money). Must be > 0 if provided.
+    /// * `category`          - Market category (e.g., Sports, Finance, Crypto). Must be one of the allowed categories.
+    /// * `max_total_stake`  - Maximum total stake for the pool (0 = no cap). Must be >= initial_liquidity.
     #[allow(clippy::too_many_arguments)]
-    pub fn create_pool(
-        env: Env,
-        creator: Address,
-        end_time: u64,
-        token: Address,
-        options_count: u32,
-        description: String,
-        metadata_url: String,
-        min_stake: i128,
-        max_stake: i128,
-        initial_liquidity: i128,
-        category: Symbol,
-    ) -> u64 {
+    pub fn create_pool(env: Env, creator: Address, args: CreatePoolArgs) -> u64 {
         Self::require_not_paused(&env);
         creator.require_auth();
 
         // Validate: category must be in the allowed list
         assert!(
-            Self::validate_category(&env, &category),
+            Self::validate_category(&env, &args.category),
             "category must be one of the allowed categories"
         );
 
         // Validate: token must be on the allowed betting whitelist
-        if !Self::is_token_whitelisted(&env, &token) {
+        if !Self::is_token_whitelisted(&env, &args.token) {
             soroban_sdk::panic_with_error!(&env, PredifiError::TokenNotWhitelisted);
         }
 
         let current_time = env.ledger().timestamp();
 
         // Validate: end_time must be in the future
-        assert!(end_time > current_time, "end_time must be in the future");
+        assert!(args.end_time > current_time, "end_time must be in the future");
 
         // Validate: minimum pool duration (1 hour)
         assert!(
-            end_time >= current_time + MIN_POOL_DURATION,
+            args.end_time >= current_time + MIN_POOL_DURATION,
             "end_time must be at least 1 hour in the future"
         );
 
         // Validate: options_count must be at least 2 (binary or more outcomes)
-        assert!(options_count >= 2, "options_count must be at least 2");
+        assert!(args.options_count >= 2, "options_count must be at least 2");
 
         // Validate: options_count must not exceed maximum limit
         assert!(
-            options_count <= MAX_OPTIONS_COUNT,
+            args.options_count <= MAX_OPTIONS_COUNT,
             "options_count exceeds maximum allowed value"
         );
 
         // Validate: initial_liquidity must be non-negative if provided
         assert!(
-            initial_liquidity >= 0,
+            args.initial_liquidity >= 0,
             "initial_liquidity must be non-negative"
         );
 
         // Validate: initial_liquidity must not exceed maximum limit
         assert!(
-            initial_liquidity <= MAX_INITIAL_LIQUIDITY,
+            args.initial_liquidity <= MAX_INITIAL_LIQUIDITY,
             "initial_liquidity exceeds maximum allowed value"
         );
 
-        // Note: Token address validation is deferred to when the token is actually used.
-        // This is the standard pattern in Soroban - invalid tokens will fail when
-        // transfers are attempted during place_prediction.
-
-        assert!(description.len() <= 256, "description exceeds 256 bytes");
-        assert!(metadata_url.len() <= 512, "metadata_url exceeds 512 bytes");
+        assert!(args.description.len() <= 256, "description exceeds 256 bytes");
+        assert!(args.metadata_url.len() <= 512, "metadata_url exceeds 512 bytes");
 
         // Validate stake limits
-        assert!(min_stake > 0, "min_stake must be greater than zero");
+        assert!(args.min_stake > 0, "min_stake must be greater than zero");
         assert!(
-            max_stake == 0 || max_stake >= min_stake,
+            args.max_stake == 0 || args.max_stake >= args.min_stake,
             "max_stake must be zero (unlimited) or >= min_stake"
         );
+
+        // Validate global cap
+        assert!(args.max_total_stake >= 0, "max_total_stake must be non-negative");
+        if args.max_total_stake > 0 {
+            assert!(
+                args.max_total_stake >= args.initial_liquidity,
+                "max_total_stake must be >= initial_liquidity"
+            );
+        }
 
         let pool_id: u64 = env
             .storage()
@@ -1114,21 +1129,22 @@ impl PredifiContract {
         Self::extend_instance(&env);
 
         let pool = Pool {
-            end_time,
+            end_time: args.end_time,
             resolved: false,
             canceled: false,
             state: MarketState::Active,
             outcome: 0,
-            token: token.clone(),
-            total_stake: initial_liquidity, // Initial liquidity is part of total stake
-            description,
-            metadata_url: metadata_url.clone(),
-            options_count,
-            min_stake,
-            max_stake,
-            initial_liquidity,
+            token: args.token.clone(),
+            total_stake: args.initial_liquidity, // Initial liquidity is part of total stake
+            description: args.description,
+            metadata_url: args.metadata_url.clone(),
+            options_count: args.options_count,
+            min_stake: args.min_stake,
+            max_stake: args.max_stake,
+            max_total_stake: args.max_total_stake,
+            initial_liquidity: args.initial_liquidity,
             creator: creator.clone(),
-            category: category.clone(),
+            category: args.category.clone(),
         };
 
         let pool_key = DataKey::Pool(pool_id);
@@ -1140,20 +1156,20 @@ impl PredifiContract {
         Self::extend_persistent(&env, &pc_key);
 
         // Transfer initial liquidity from creator to contract if provided
-        if initial_liquidity > 0 {
-            let token_client = token::Client::new(&env, &token);
-            token_client.transfer(&creator, env.current_contract_address(), &initial_liquidity);
+        if args.initial_liquidity > 0 {
+            let token_client = token::Client::new(&env, &args.token);
+            token_client.transfer(&creator, env.current_contract_address(), &args.initial_liquidity);
         }
 
         // Update category index
-        let category_count_key = DataKey::CategoryPoolCount(category.clone());
+        let category_count_key = DataKey::CategoryPoolCount(args.category.clone());
         let category_count: u32 = env
             .storage()
             .persistent()
             .get(&category_count_key)
             .unwrap_or(0);
 
-        let category_index_key = DataKey::CategoryPoolIndex(category.clone(), category_count);
+        let category_index_key = DataKey::CategoryPoolIndex(args.category.clone(), category_count);
         env.storage()
             .persistent()
             .set(&category_index_key, &pool_id);
@@ -1171,26 +1187,77 @@ impl PredifiContract {
 
         PoolCreatedEvent {
             pool_id,
-            end_time,
-            token,
-            options_count,
-            metadata_url,
-            initial_liquidity,
-            category,
+            end_time: args.end_time,
+            token: args.token,
+            options_count: args.options_count,
+            metadata_url: args.metadata_url,
+            initial_liquidity: args.initial_liquidity,
+            category: args.category,
         }
         .publish(&env);
 
         // Emit initial liquidity event if liquidity was provided
-        if initial_liquidity > 0 {
+        if args.initial_liquidity > 0 {
             InitialLiquidityProvidedEvent {
                 pool_id,
                 creator,
-                amount: initial_liquidity,
+                amount: args.initial_liquidity,
             }
             .publish(&env);
         }
 
         pool_id
+    }
+
+    /// Increase the maximum total stake cap for an active pool.
+    /// Only the pool creator may call this, only before `pool.end_time`.
+    /// The cap can only be increased (never decreased). Set cap to > 0 to enable.
+    pub fn increase_max_total_stake(
+        env: Env,
+        creator: Address,
+        pool_id: u64,
+        new_max_total_stake: i128,
+    ) -> Result<(), PredifiError> {
+        Self::require_not_paused(&env);
+        creator.require_auth();
+
+        if new_max_total_stake <= 0 {
+            return Err(PredifiError::InvalidAmount);
+        }
+
+        let pool_key = DataKey::Pool(pool_id);
+        let mut pool: Pool = env
+            .storage()
+            .persistent()
+            .get(&pool_key)
+            .expect("Pool not found");
+        Self::extend_persistent(&env, &pool_key);
+
+        if pool.creator != creator {
+            return Err(PredifiError::Unauthorized);
+        }
+        if pool.state != MarketState::Active || pool.resolved || pool.canceled {
+            return Err(PredifiError::InvalidPoolState);
+        }
+        if env.ledger().timestamp() >= pool.end_time {
+            return Err(PredifiError::InvalidPoolState);
+        }
+
+        // Must be greater than current cap (or initialize cap from 0)
+        if pool.max_total_stake > 0 && new_max_total_stake <= pool.max_total_stake {
+            return Err(PredifiError::InvalidAmount);
+        }
+
+        // Cannot set below current total stake
+        if new_max_total_stake < pool.total_stake {
+            return Err(PredifiError::InvalidAmount);
+        }
+
+        pool.max_total_stake = new_max_total_stake;
+        env.storage().persistent().set(&pool_key, &pool);
+        Self::extend_persistent(&env, &pool_key);
+
+        Ok(())
     }
 
     /// Resolve a pool with a winning outcome. Caller must have Operator role (1).
@@ -1418,6 +1485,15 @@ impl PredifiContract {
             .persistent()
             .set(&pred_key, &Prediction { amount, outcome });
         Self::extend_persistent(&env, &pred_key);
+
+        // Enforce global pool liquidity cap (if configured)
+        if pool.max_total_stake > 0 {
+            let new_total = pool.total_stake.checked_add(amount).expect("overflow");
+            assert!(
+                new_total <= pool.max_total_stake,
+                "pool has reached max total stake cap"
+            );
+        }
 
         // Update total stake (INV-1)
         pool.total_stake = pool.total_stake.checked_add(amount).expect("overflow");

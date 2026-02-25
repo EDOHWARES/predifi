@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::test_utils::TokenTestContext;
+use crate::CreatePoolArgs;
 use soroban_sdk::{
     symbol_short,
     testutils::{Address as _, Ledger},
@@ -84,18 +85,21 @@ fn test_full_market_lifecycle() {
     let end_time = 3600u64;
     let pool_id = client.create_pool(
         &user1,
-        &end_time,
-        &token_ctx.token_address,
-        &3u32,
-        &String::from_str(&env, "Test Pool"),
-        &String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
-        &1i128,
-        &0i128,
-        &0i128,
-        &symbol_short!("Tech"),
+        &CreatePoolArgs {
+            end_time,
+            token: token_ctx.token_address.clone(),
+            options_count: 3u32,
+            description: String::from_str(&env, "Test Pool"),
+            metadata_url: String::from_str(
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            initial_liquidity: 0i128,
+            category: symbol_short!("Tech"),
+            max_total_stake: 0i128,
+        },
     );
 
     // 2. Place Predictions
@@ -159,18 +163,21 @@ fn test_multi_user_betting_and_balance_verification() {
     let creator = Address::generate(&env);
     let pool_id = client.create_pool(
         &creator,
-        &4000u64,
-        &token_ctx.token_address,
-        &4u32,
-        &String::from_str(&env, "Test Pool"),
-        &String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
-        &1i128,
-        &0i128,
-        &0i128,
-        &symbol_short!("Tech"),
+        &CreatePoolArgs {
+            end_time: 4000u64,
+            token: token_ctx.token_address.clone(),
+            options_count: 4u32,
+            description: String::from_str(&env, "Test Pool"),
+            metadata_url: String::from_str(
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            initial_liquidity: 0i128,
+            category: symbol_short!("Tech"),
+            max_total_stake: 0i128,
+        },
     );
 
     // Bets:
@@ -228,18 +235,21 @@ fn test_market_resolution_multiple_winners() {
     let creator = Address::generate(&env);
     let pool_id = client.create_pool(
         &creator,
-        &3600u64,
-        &token_ctx.token_address,
-        &3u32,
-        &String::from_str(&env, "Test Pool"),
-        &String::from_str(
-            &env,
-            "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
-        ),
-        &1i128,
-        &0i128,
-        &0i128,
-        &symbol_short!("Tech"),
+        &CreatePoolArgs {
+            end_time: 3600u64,
+            token: token_ctx.token_address.clone(),
+            options_count: 3u32,
+            description: String::from_str(&env, "Test Pool"),
+            metadata_url: String::from_str(
+                &env,
+                "ipfs://bafybeigdyrzt5sfp7udm7hu76uh7y26nf3efuylqabf3oclgtqy55fbzdi",
+            ),
+            min_stake: 1i128,
+            max_stake: 0i128,
+            initial_liquidity: 0i128,
+            category: symbol_short!("Tech"),
+            max_total_stake: 0i128,
+        },
     );
 
     // Bets:
